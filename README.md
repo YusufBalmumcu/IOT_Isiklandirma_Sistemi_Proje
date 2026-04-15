@@ -1,1 +1,1 @@
-# IOT_Is-klandirma_Sistemi_Proje
+# IOT_Isiklandirma_Sistemi_Proje
