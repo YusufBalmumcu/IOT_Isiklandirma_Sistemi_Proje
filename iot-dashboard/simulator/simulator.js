@@ -17,7 +17,9 @@ const mqtt = require('mqtt');
 // ========================
 const MQTT_HOST = process.env.MQTT_HOST || 'broker.emqx.io';
 const MQTT_PORT = parseInt(process.env.MQTT_PORT) || 1883;
-const TOPIC_PREFIX = process.env.MQTT_TOPIC_PREFIX || 'iot_dash_abird_';
+const PROBLEM_ID = process.env.MQTT_PROBLEM_ID || 'tarim_isik';
+const TAKIM_NO   = process.env.MQTT_TAKIM_NO || '1';
+const TOPIC_TELEMETRY = `${PROBLEM_ID}/${TAKIM_NO}/telemetry`;
 const SENSOR_INTERVAL_MS  = 3000;  // Sensör verisi yayın sıklığı
 const PERSON_INTERVAL_MS  = 6000;  // Giriş/çıkış olayı sıklığı
 const LIGHT_CHECK_MS      = 1000;  // Işık durum kontrolü
@@ -57,7 +59,7 @@ client.on('connect', () => {
   console.log('[SIM] ✓ Bağlantı kuruldu\n');
 
   // Başlangıç durumu
-  publish(TOPIC_PREFIX + 'esp32/status', {
+  publish(TOPIC_TELEMETRY, {
     status: 'online',
     ip: '192.168.1.99',
     version: 'sim-1.0',
@@ -91,7 +93,7 @@ function startSensorLoop() {
     const s1  = nextDistance(false);
     const s2  = nextDistance(false);
 
-    publish(TOPIC_PREFIX + 'esp32/sensors', {
+    publish(TOPIC_TELEMETRY, {
       s1,
       s2,
       ldr_value:    ldr,
@@ -119,7 +121,7 @@ function startPersonLoop() {
     const s1Triggered = isEntry;  // İç sensör önce tetiklenir (giriş)
     const s2Triggered = !isEntry; // Dış sensör önce tetiklenir (çıkış)
 
-    publish(TOPIC_PREFIX + 'esp32/persons', {
+    publish(TOPIC_TELEMETRY, {
       person_count: personCount,
       direction,
       event:        isEntry ? 'entry' : 'exit',
@@ -139,7 +141,7 @@ function startLightLoop() {
     if (shouldBeOn !== lightOn) {
       lightOn = shouldBeOn;
 
-      publish(TOPIC_PREFIX + 'esp32/light', {
+      publish(TOPIC_TELEMETRY, {
         light_state:  lightOn ? 1 : 0,
         ldr_value:    ldr,
         person_count: personCount,
@@ -156,6 +158,6 @@ function startLightLoop() {
 // Temiz kapatma
 process.on('SIGINT', () => {
   console.log('\n[SIM] Kapatılıyor...');
-  publish(TOPIC_PREFIX + 'esp32/status', { status: 'offline' }, true);
+  publish(TOPIC_TELEMETRY, { status: 'offline' }, true);
   setTimeout(() => { client.end(); process.exit(0); }, 500);
 });

@@ -130,13 +130,17 @@ function initSchema() {
   if (!roomExists.length || !roomExists[0].values.length) {
     db.run(
       `INSERT INTO rooms (name, mqtt_cmd_topic, light_mode, ldr_threshold) VALUES (?, ?, ?, ?)`,
-      ['Salon', 'iot_dash_abird_cmd/salon', 'manual', 1500]
+      ['Salon', 'tarim_isik/1/command', 'manual', 1500]
     );
     console.log('[DB] Varsayılan oda oluşturuldu: Salon');
     saveDb();
   }
 
   // ─── Migrasyonlar (Eski veritabanı dosyaları için schema güncellemeleri) ───
+  try {
+    db.run("UPDATE rooms SET mqtt_cmd_topic = 'tarim_isik/1/command' WHERE name = 'Salon'");
+    saveDb();
+  } catch(e) {}
   try {
     db.run("ALTER TABLE sensor_logs ADD COLUMN room_id INTEGER;");
     console.log('[DB] Migrasyon: sensor_logs tablosuna room_id sütunu eklendi.');

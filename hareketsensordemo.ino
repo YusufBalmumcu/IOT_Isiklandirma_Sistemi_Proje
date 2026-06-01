@@ -58,13 +58,33 @@ bool msgActive = false;
 #define C_BG        0x0000
 #define C_ACCENT    0x1CB1
 
+// --- MQTT TOPIC AYARLARI ---
+const char* topic_telemetry = "tarim_isik/1/telemetry";
+const char* topic_cmd       = "tarim_isik/1/command";
+
 // --- MQTT BAGLANTI FONKSIYONU ---
+void callback(char* topic, byte* payload, unsigned int length) {
+    String msg;
+    for (int i = 0; i < length; i++) msg += (char)payload[i];
+    Serial.print("Gelen MQTT ("); Serial.print(topic); Serial.print("): "); Serial.println(msg);
+
+    // Eğer backend'den komut geldiyse uygula
+    if (String(topic).endsWith("/command")) {
+        if (msg.indexOf("\"state\":1") > 0 || msg.indexOf("\"state\": 1") > 0) {
+            digitalWrite(akilliIsik, HIGH);
+        } else if (msg.indexOf("\"state\":0") > 0 || msg.indexOf("\"state\": 0") > 0) {
+            digitalWrite(akilliIsik, LOW);
+        }
+    }
+}
+
 void reconnect() {
     while (!client.connected()) {
         Serial.print("MQTT Baglantisi kuruluyor...");
         if (client.connect("ESP32_Akilli_Sistem")) {
             Serial.println("Baglandi.");
-            client.publish("oda/durum", "Online");
+            client.subscribe(topic_cmd); // Komutları dinle
+            client.publish(topic_telemetry, "{\"status\":\"online\"}");
         } else {
             Serial.print("Hata: "); Serial.print(client.state());
             delay(5000);
@@ -173,6 +193,7 @@ void setup() {
     Serial.println("WiFi baglantisi arka planda baslatildi...");
 
     client.setServer(mqtt_server, 1883);
+    client.setCallback(callback);
 
     BLEDevice::init("ESP32_AKILLI_SYSTEM");
     pBLEScan = BLEDevice::getScan();
@@ -190,7 +211,8 @@ void loop() {
             if (now - lastReconnectAttempt > 5000) { // Bağlantı yoksa 5 saniyede bir dene
                 lastReconnectAttempt = now;
                 if (client.connect("ESP32_Akilli_Sistem")) {
-                    client.publish("oda/durum", "Online");
+                    client.subscribe(topic_cmd);
+                    client.publish(topic_telemetry, "{\"status\":\"online\"}");
                 }
             }
         } else {
@@ -266,15 +288,19 @@ void loop() {
         if (curR && tR == 0) tR = now;
 
         if (tL > 0 && tR > 0) {
+            String dir = "";
             if (tL < tR) { // Giriş
                 kisiSayisi++; 
-                if(client.connected()) client.publish("oda/hareket", "Giris"); 
+                dir = "in";
             } else { // Çıkış
                 if(kisiSayisi > 0) kisiSayisi--; 
-                if(client.connected()) client.publish("oda/hareket", "Cikis"); 
+                dir = "out";
             }
             
-            if(client.connected()) client.publish("oda/kisiSayisi", String(kisiSayisi).c_str());
+            if(client.connected()) {
+                String payload = "{\"person_count\":" + String(kisiSayisi) + ",\"direction\":\"" + dir + "\"}";
+                client.publish(topic_telemetry, payload.c_str());
+            }
 
             // Hoşgeldin/Güle Güle Mesajı
             if (currentPage == 1) {
@@ -292,10 +318,12 @@ void loop() {
         
         // Periyodik MQTT Güncellemesi (Bağlantı varsa)
         if (client.connected() && (now - lastMqttUpdate > 5000)) {
-            client.publish("oda/isik", String(curLdr).c_str());
+            String payload = "{\"ldr_value\":" + String(curLdr) + ",\"person_count\":" + String(kisiSayisi) + "}";
+            client.publish(topic_telemetry, payload.c_str());
+
             if (btTakipModu) {
-                client.publish("oda/bt_rssi", String(rssiDegeri).c_str());
-                client.publish("oda/bt_durum", kullaniciYakin ? "YAKIN" : "UZAK");
+                String btPayload = "{\"rssi\":" + String(rssiDegeri) + ",\"durum\":\"" + (kullaniciYakin ? "YAKIN" : "UZAK") + "\"}";
+                client.publish(topic_telemetry, btPayload.c_str());
             }
             lastMqttUpdate = now;
         }
@@ -307,11 +335,13 @@ void loop() {
             if(currentPage == 3) drawPage3();
         }
 
-        // Akıllı Işık Mantığı (İnternetten bağımsız çalışır)
-        if (btTakipModu) {
-            digitalWrite(akilliIsik, kullaniciYakin ? HIGH : LOW);
-        } else {
-            digitalWrite(akilliIsik, (kisiSayisi > 0 && curLdr > karanlikLimit) ? HIGH : LOW);
+        // Akıllı Işık Mantığı (Sadece internet yoksa lokal olarak çalışır)
+        if (!client.connected()) {
+            if (btTakipModu) {
+                digitalWrite(akilliIsik, kullaniciYakin ? HIGH : LOW);
+            } else {
+                digitalWrite(akilliIsik, (kisiSayisi > 0 && curLdr > karanlikLimit) ? HIGH : LOW);
+            }
         }
     }
 

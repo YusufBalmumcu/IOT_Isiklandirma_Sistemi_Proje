@@ -1,6 +1,5 @@
 const mqtt = require('mqtt');
 const { getDb, saveDb } = require('./db/database');
-const TOPIC_PREFIX = process.env.MQTT_TOPIC_PREFIX || 'iot_dash_abird_';
 
 // ─── Global LDR State ────────────────────────────────────────────────────────
 // LDR tek sensör, tüm sistem için ortam ışığını ölçer
@@ -80,7 +79,9 @@ function evaluateRoomAutomation(room, updatedPersonCount, updatedLdrValue) {
 
   let desiredState = room.light_state; // varsayılan: değişiklik yok
 
-  const isDark = (ldr === 1); // 3-pinli digital LDR: 1 = Karanlık, 0 = Aydınlık
+  // Simülatör ldr = 1 (Karanlık) gönderir. Gerçek ESP32 analog değer (örn: 2500) gönderir.
+  // Analog değerlerde threshold'dan büyükse karanlık sayılır (Arduino'daki mantığa uygun).
+  const isDark = (ldr === 1) || (ldr > threshold && ldr > 1);
 
   if (room.light_mode === 'auto') {
     desiredState = isDark ? 1 : 0;
@@ -140,9 +141,9 @@ function publishLightCommand(cmdTopic, state) {
     console.warn('[MQTT] Bağlantı yok, komut gönderilemedi:', cmdTopic);
     return;
   }
-  const payload = JSON.stringify({ state, ts: Date.now() });
-  mqttClient.publish(`${cmdTopic}/light`, payload, { qos: 1, retain: true });
-  console.log(`[MQTT] → ${cmdTopic}/light :`, payload);
+  const payload = JSON.stringify({ action: "light", state, ts: Date.now() });
+  mqttClient.publish(cmdTopic, payload, { qos: 1, retain: true });
+  console.log(`[MQTT] → ${cmdTopic} :`, payload);
 }
 
 function publishModeCommand(cmdTopic, mode, threshold) {
@@ -150,9 +151,9 @@ function publishModeCommand(cmdTopic, mode, threshold) {
     console.warn('[MQTT] Bağlantı yok, mod komutu gönderilemedi:', cmdTopic);
     return;
   }
-  const payload = JSON.stringify({ mode, ldr_threshold: threshold, ts: Date.now() });
-  mqttClient.publish(`${cmdTopic}/mode`, payload, { qos: 1, retain: true });
-  console.log(`[MQTT] → ${cmdTopic}/mode :`, payload);
+  const payload = JSON.stringify({ action: "mode", mode, ldr_threshold: threshold, ts: Date.now() });
+  mqttClient.publish(cmdTopic, payload, { qos: 1, retain: true });
+  console.log(`[MQTT] → ${cmdTopic} :`, payload);
 }
 
 // ─── Gelen MQTT Mesajı İşleme ─────────────────────────────────────────────────
@@ -164,13 +165,14 @@ function handleSensorMessage(topic, payload) {
     globalLdrValue = payload.ldr_value;
   }
 
-  // Hangi odaya ait? topic'ten room_id çıkar
-  // Örnek topic: iot_dash_abird_room/salon/sensors
+  // Hangi odaya ait? topic: problem_id / takim_no / mesaj_tipi
   let room = null;
-  const roomMatch = topic.match(/room\/([^/]+)\//);
-  if (roomMatch) {
-    room = db.get("SELECT * FROM rooms WHERE LOWER(name) = LOWER(?)", [roomMatch[1]]);
-  } else {
+  const match = topic.match(/([^/]+)\/([^/]+)\/(telemetry|command)/);
+  if (match) {
+    const takim_no = match[2];
+    room = db.get("SELECT * FROM rooms WHERE id = ?", [takim_no]);
+  }
+  if (!room) {
     room = db.get("SELECT * FROM rooms WHERE LOWER(name) = 'salon'");
   }
 
@@ -223,22 +225,10 @@ function connectMqtt() {
   mqttClient.on('connect', () => {
     console.log('[MQTT] Bağlantı kuruldu ✓');
 
-    // Eski genel topic'ler (geriye dönük uyumluluk)
-    mqttClient.subscribe(TOPIC_PREFIX + 'esp32/sensors', { qos: 1 });
-    mqttClient.subscribe(TOPIC_PREFIX + 'esp32/persons', { qos: 1 });
-    mqttClient.subscribe(TOPIC_PREFIX + 'esp32/light',   { qos: 1 });
-    mqttClient.subscribe(TOPIC_PREFIX + 'esp32/status',  { qos: 0 });
+    mqttClient.subscribe('+/+/telemetry', { qos: 1 });
+    mqttClient.subscribe('+/+/command', { qos: 1 });
 
-    // Oda bazlı topic'ler (wildcard: tüm odalar)
-    // Örnek: iot_dash_abird_room/salon/sensors
-    //        iot_dash_abird_room/salon/persons
-    //        iot_dash_abird_room/salon/light
-    mqttClient.subscribe(TOPIC_PREFIX + 'room/+/sensors', { qos: 1 });
-    mqttClient.subscribe(TOPIC_PREFIX + 'room/+/persons', { qos: 1 });
-    mqttClient.subscribe(TOPIC_PREFIX + 'room/+/light',   { qos: 1 });
-    mqttClient.subscribe(TOPIC_PREFIX + 'room/+/status',  { qos: 0 });
-
-    console.log('[MQTT] Topic\'lere abone olundu');
+    console.log('[MQTT] Topic\'lere abone olundu (+/+/telemetry ve +/+/command)');
   });
 
   mqttClient.on('message', (topic, rawMsg) => {
@@ -252,21 +242,22 @@ function connectMqtt() {
 
     // Event tipini belirle
     let event_type = 'sensor_data';
-    if (topic.includes('/persons')) {
+    if (payload.direction) {
       event_type = payload.direction === 'in'  ? 'entry' :
                    payload.direction === 'out' ? 'exit'  : 'person_update';
-    } else if (topic.includes('/light')) {
+    } else if (payload.light_state !== undefined) {
       event_type = 'light_change';
-    } else if (topic.includes('/status')) {
+    } else if (payload.status) {
       event_type = 'status';
     }
 
     // room_id'yi bul
     let room_id = null;
-    const roomMatch = topic.match(/room\/([^/]+)\//);
+    const match = topic.match(/([^/]+)\/([^/]+)\/(telemetry|command)/);
     const db = getDb();
-    if (roomMatch) {
-      const r = db.get("SELECT id FROM rooms WHERE LOWER(name) = LOWER(?)", [roomMatch[1]]);
+    if (match) {
+      const takim_no = match[2];
+      const r = db.get("SELECT id FROM rooms WHERE id = ?", [takim_no]);
       room_id = r?.id ?? null;
     } else {
       const r = db.get("SELECT id FROM rooms WHERE LOWER(name) = 'salon'");
@@ -318,6 +309,7 @@ function startSimulator() {
     const s1  = Math.random() * 100 + 5;
     const s2  = Math.random() * 100 + 5;
     const room = db.get("SELECT id FROM rooms WHERE LOWER(name) = LOWER('Salon')");
+    const takim_no = room ? room.id : 1;
 
     // Global LDR güncelle ve otomasyon tetikle
     globalLdrValue = ldr;
@@ -326,7 +318,7 @@ function startSimulator() {
 
     broadcast({
       type: 'sensor_update',
-      topic: TOPIC_PREFIX + 'room/salon/sensors',
+      topic: `tarim_isik/${takim_no}/telemetry`,
       room_id: room?.id ?? null,
       event_type: 'sensor_data',
       ldr_value: ldr,
@@ -353,6 +345,7 @@ function startSimulator() {
       ? Math.min(personCount + 1, 10)
       : Math.max(personCount - 1, 0);
     const room = db.get("SELECT id FROM rooms WHERE LOWER(name) = LOWER('Salon')");
+    const takim_no = room ? room.id : 1;
 
     const direction = isEntry ? 'in' : 'out';
     const event_type = isEntry ? 'entry' : 'exit';
@@ -363,7 +356,7 @@ function startSimulator() {
 
     broadcast({
       type: 'sensor_update',
-      topic: TOPIC_PREFIX + 'room/salon/persons',
+      topic: `tarim_isik/${takim_no}/telemetry`,
       room_id: room?.id ?? null,
       event_type,
       person_count: personCount,
