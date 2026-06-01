@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    container_name: iot-backend
+    ports:
+      - "3001:3001"
+      - "4545:4545/udp"
+    volumes:
+      - ./backend/data:/app/data
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=development
+
+  frontend:
+    build: ./frontend
+    container_name: iot-frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      - REACT_APP_BACKEND_URL=http://localhost:3001
+      - WDS_SOCKET_PORT=0
+
+  simulator:
+    build: ./simulator
+    container_name: iot-simulator
+    restart: unless-stopped
+    depends_on:
+      - backend
