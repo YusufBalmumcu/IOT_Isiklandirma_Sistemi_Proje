@@ -1,19 +1,21 @@
 /**
- * Akıllı Işıklandırma Sistemi - Çoklu Servis Başlatıcı
+ * Akıllı Işıklandırma Sistemi - Başlatıcı (Launcher)
  * 
- * Bu script tüm IoT sistem bileşenlerini sırasıyla başlatır:
- * 1. Backend (port 3001)
- * 2. Simülatör (MQTT veri yayınlayıcı)
- * 3. Web Dashboard (React Frontend)
- * 4. Mobil (Flutter - Cihaz bağlıysa opsiyonel)
+ * Varsayılan olarak sadece Backend ve Web arayüzünü (Frontend) başlatır.
+ * Gerçek ESP32 cihazınızla sorunsuz çalışması için simülatörü dışarıda bırakır.
  * 
- * Kullanım:
- *   node start.js
+ * Ekstra parametreler:
+ *   node start.js --with-sim     (Simülatörü de başlatır)
+ *   node start.js --with-mobile  (Flutter mobil uygulamayı da başlatır)
  */
 
 const { spawn, execSync, exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+
+const args = process.argv.slice(2);
+const START_SIMULATOR = args.includes('--with-sim');
+const START_MOBILE = args.includes('--with-mobile');
 
 const COLORS = {
   reset: '\x1b[0m',
@@ -27,44 +29,30 @@ const COLORS = {
   cyan: '\x1b[36m',
 };
 
-console.log(`${COLORS.bright}${COLORS.blue}====================================================${COLORS.reset}`);
-console.log(`${COLORS.bright}${COLORS.blue}   SMART LIGHTING SYSTEM - ALL-IN-ONE LAUNCHER      ${COLORS.reset}`);
+console.log(`\n${COLORS.bright}${COLORS.blue}====================================================${COLORS.reset}`);
+console.log(`${COLORS.bright}${COLORS.blue}   IOT DASHBOARD BAŞLATICI (BACKEND & WEB)          ${COLORS.reset}`);
 console.log(`${COLORS.bright}${COLORS.blue}====================================================${COLORS.reset}\n`);
 
-// ─── BAĞIMLILIK KONTROLÜ VE YÜKLEME ──────────────────────────────────────────
+// ─── BAĞIMLILIK KONTROLÜ ─────────────────────────────────────────────────────
 function checkAndInstallDeps(dirName) {
   const dirPath = path.join(__dirname, dirName);
   const nodeModulesPath = path.join(dirPath, 'node_modules');
   
   if (!fs.existsSync(nodeModulesPath) && fs.existsSync(path.join(dirPath, 'package.json'))) {
-    console.log(`${COLORS.yellow}[SYSTEM] '${dirName}' için bağımlılıklar yükleniyor, lütfen bekleyin...${COLORS.reset}`);
+    console.log(`${COLORS.yellow}[SYSTEM] '${dirName}' için paketler yükleniyor, lütfen bekleyin...${COLORS.reset}`);
     try {
       execSync('npm install', { cwd: dirPath, stdio: 'inherit' });
-      console.log(`${COLORS.green}[SYSTEM] '${dirName}' bağımlılıkları başarıyla yüklendi ✓${COLORS.reset}\n`);
+      console.log(`${COLORS.green}[SYSTEM] '${dirName}' paketleri başarıyla yüklendi ✓${COLORS.reset}\n`);
     } catch (err) {
-      console.error(`${COLORS.red}[SYSTEM] '${dirName}' bağımlılıkları yüklenirken hata oluştu!${COLORS.reset}`);
+      console.error(`${COLORS.red}[SYSTEM] '${dirName}' paketleri yüklenirken hata oluştu!${COLORS.reset}`);
       process.exit(1);
     }
   }
 }
 
 checkAndInstallDeps('backend');
-checkAndInstallDeps('simulator');
 checkAndInstallDeps('frontend');
-
-// ─── FLUTTER CİHAZ KONTROLÜ ──────────────────────────────────────────────────
-let hasMobileDevice = false;
-try {
-  const devices = execSync('flutter devices', { encoding: 'utf8', timeout: 5000 });
-  if (devices && !devices.includes('No devices available')) {
-    hasMobileDevice = true;
-    console.log(`${COLORS.green}[SYSTEM] Flutter cihazı algılandı, Mobil uygulama da başlatılacak.${COLORS.reset}`);
-  } else {
-    console.log(`${COLORS.yellow}[SYSTEM] Bağlı Flutter cihazı bulunamadı. Mobil uygulama başlatılmayacak (opsiyonel).${COLORS.reset}`);
-  }
-} catch (e) {
-  console.log(`${COLORS.dim}[SYSTEM] Flutter CLI bulunamadı veya cihaz sorgulanamadı. Mobil uygulama adımı atlanıyor.${COLORS.reset}`);
-}
+if (START_SIMULATOR) checkAndInstallDeps('simulator');
 
 // ─── SERVİS TANIMLARI ────────────────────────────────────────────────────────
 const SERVICES = [
@@ -77,14 +65,6 @@ const SERVICES = [
     env: { ...process.env, PORT: '3001' }
   },
   {
-    name: 'Simulator',
-    color: COLORS.cyan,
-    dir: 'simulator',
-    command: 'node',
-    args: ['simulator.js'],
-    env: process.env
-  },
-  {
     name: 'Web UI',
     color: COLORS.magenta,
     dir: 'frontend',
@@ -94,7 +74,19 @@ const SERVICES = [
   }
 ];
 
-if (hasMobileDevice) {
+if (START_SIMULATOR) {
+  SERVICES.push({
+    name: 'Simulator',
+    color: COLORS.cyan,
+    dir: 'simulator',
+    command: 'node',
+    args: ['simulator.js'],
+    env: process.env
+  });
+  console.log(`${COLORS.cyan}[INFO] Simülatör modülü aktif edildi.${COLORS.reset}`);
+}
+
+if (START_MOBILE) {
   SERVICES.push({
     name: 'Mobile',
     color: COLORS.yellow,
@@ -102,8 +94,9 @@ if (hasMobileDevice) {
     command: 'flutter',
     args: ['run'],
     env: process.env,
-    interactive: true // Stdin yönlendirmesi için (hot-reload 'r' tuşu vb.)
+    interactive: true
   });
+  console.log(`${COLORS.yellow}[INFO] Mobil uygulama aktif edildi.${COLORS.reset}`);
 }
 
 const activeProcesses = [];
@@ -113,7 +106,6 @@ function killProcessTree(childProcess) {
   if (!pid) return;
 
   if (process.platform === 'win32') {
-    // Windows üzerinde tüm alt süreçleri (tree) zorla sonlandır
     exec(`taskkill /pid ${pid} /T /F`, () => {});
   } else {
     try {
@@ -126,29 +118,25 @@ function killProcessTree(childProcess) {
 
 // ─── SERVİSLERİ BAŞLATMA DÖNGÜSÜ ─────────────────────────────────────────────
 async function startServices() {
-  const isWindows = process.platform === 'win32' || process.env.OS === 'Windows_NT' || process.platform === 'cygwin' || process.platform === 'msys';
+  const isWindows = process.platform === 'win32';
 
   for (let i = 0; i < SERVICES.length; i++) {
     if (isCleaningUp) break;
 
     const service = SERVICES[i];
     
-    // Gecikmeli başlatma (Backend'in önce açılması için)
-    if (i > 0) {
-      await new Promise(resolve => setTimeout(resolve, i === 1 ? 2500 : 1000));
-    }
+    // Backend'in açılmasına zaman tanımak için kısa bekleme
+    if (i > 0) await new Promise(resolve => setTimeout(resolve, 2000));
     if (isCleaningUp) break;
 
     console.log(`${service.color}[SYSTEM] ${service.name} başlatılıyor...${COLORS.reset}`);
 
-    // Windows uyumluluğu için npm.cmd veya flutter.bat kullanılması gerekir
     let cmd = service.command;
     if (isWindows) {
       if (cmd === 'npm') cmd = 'npm.cmd';
       if (cmd === 'flutter') cmd = 'flutter.bat';
     }
 
-    // Safely clone environment variables, discarding undefined/null values to avoid spawn EINVAL
     const safeEnv = {};
     if (service.env) {
       for (const [key, val] of Object.entries(service.env)) {
@@ -168,50 +156,39 @@ async function startServices() {
 
     activeProcesses.push({ name: service.name, process: child });
 
-    // Hata durumunda hemen yakala
     child.on('error', (err) => {
       console.error(`${COLORS.red}[SYSTEM] ${service.name} başlatılırken hata oluştu: ${err.message}${COLORS.reset}`);
       cleanup();
     });
 
-    // Çıktıları renklendirerek konsola yaz
     child.stdout.on('data', (data) => {
       const lines = data.toString().split('\n');
       lines.forEach(line => {
-        if (line.trim()) {
-          console.log(`${service.color}[${service.name}]${COLORS.reset} ${line.trim()}`);
-        }
+        if (line.trim()) console.log(`${service.color}[${service.name}]${COLORS.reset} ${line.trim()}`);
       });
     });
 
     child.stderr.on('data', (data) => {
       const lines = data.toString().split('\n');
       lines.forEach(line => {
-        if (line.trim()) {
-          console.error(`${COLORS.red}[${service.name} Error]${COLORS.reset} ${line.trim()}`);
-        }
+        if (line.trim()) console.error(`${COLORS.red}[${service.name} Error]${COLORS.reset} ${line.trim()}`);
       });
     });
 
-    // Mobil uygulama interaktif ise terminal tuş vuruşlarını yönlendir (hot reload için)
     if (service.interactive && typeof process.stdin.setRawMode === 'function') {
       process.stdin.setRawMode(true);
       process.stdin.resume();
       process.stdin.setEncoding('utf8');
       process.stdin.on('data', (key) => {
-        // Ctrl+C basılırsa çıkış yap
-        if (key === '\u0003') {
-          cleanup();
-        } else {
-          child.stdin.write(key);
-        }
+        if (key === '\u0003') cleanup(); // Ctrl+C
+        else child.stdin.write(key);
       });
     }
 
     child.on('close', (code) => {
       console.log(`${service.color}[SYSTEM] ${service.name} kapandı (kod: ${code})${COLORS.reset}`);
       if (code !== 0 && !isCleaningUp) {
-        console.error(`${COLORS.red}[SYSTEM] Kritik servis ${service.name} beklenmedik şekilde kapandı. Tüm servisler durduruluyor...${COLORS.reset}`);
+        console.error(`${COLORS.red}[SYSTEM] ${service.name} beklenmedik şekilde kapandı.${COLORS.reset}`);
         cleanup();
       }
     });
