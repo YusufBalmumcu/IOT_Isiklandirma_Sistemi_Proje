@@ -5,6 +5,15 @@ import { useWebSocket } from '../hooks/useWebSocket';
 
 const API = (process.env.REACT_APP_API_URL || '').trim().replace(/\/$/, '');
 
+// LDR karanlık kontrolü: simülatör 0/1, gerçek ESP32 analog (0-4095, >2500 = karanlık)
+const LDR_THRESHOLD = 2500;
+function isDark(ldrValue) {
+  if (ldrValue === null || ldrValue === undefined) return false;
+  if (ldrValue === 1) return true;  // simülatör modu
+  if (ldrValue === 0) return false; // simülatör modu
+  return ldrValue > LDR_THRESHOLD;  // gerçek analog değer
+}
+
 async function apiFetch(path, token, method = 'GET', body = null) {
   const options = {
     method,
@@ -306,7 +315,7 @@ function LogTable({ logs, lang, theme }) {
                     </span>
                   ) : '—'}
                 </td>
-                <td style={{ color: c.textSec, padding: '8px 12px' }}>{log.ldr_value !== null ? (log.ldr_value === 1 ? (lang==='tr'?'Karanlık':'Dark') : (lang==='tr'?'Aydınlık':'Bright')) : '—'}</td>
+                <td style={{ color: c.textSec, padding: '8px 12px' }}>{log.ldr_value !== null ? (isDark(log.ldr_value) ? (lang==='tr'?'Karanlık':'Dark') : (lang==='tr'?'Aydınlık':'Bright')) : '—'}</td>
                 <td style={{ color: c.textSec, padding: '8px 12px' }}>
                   {log.direction === 'in' ? t.in : log.direction === 'out' ? t.out : '—'}
                 </td>
@@ -350,7 +359,7 @@ function HomeView({ t, c, theme, lang, logs, stats, hourly, alerts, liveData }) 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
         <MetricCard label={t.totalPersonCount} value={personCount} icon={personCount > 0 ? '🧑‍🤝‍🧑' : '🚶'} color={personCount > 0 ? (theme==='dark'?'#4ade80':'#16a34a') : c.textMuted} subtext={t.todayEntries(stats.today_entries ?? 0, stats.today_exits ?? 0)} theme={theme} />
         <MetricCard label={t.globalLightStatus} value={lightIsOn ? t.on : t.off} icon={lightIsOn ? '💡' : '🌑'} color={lightIsOn ? '#fbbf24' : c.textSec} subtext={t.todayLights(stats.light_on_count_today ?? 0)} theme={theme} />
-        <MetricCard label={t.ldr} value={liveData.ldr_value === 1 ? (lang === 'tr' ? 'Karanlık' : 'Dark') : (lang === 'tr' ? 'Aydınlık' : 'Bright')} icon="☀️" color="#60a5fa" subtext={liveData.ldr_value === 1 ? t.darkRoom : t.brightRoom} theme={theme} />
+        <MetricCard label={t.ldr} value={isDark(liveData.ldr_value) ? (lang === 'tr' ? 'Karanlık' : 'Dark') : (lang === 'tr' ? 'Aydınlık' : 'Bright')} icon={isDark(liveData.ldr_value) ? '🌙' : '☀️'} color={isDark(liveData.ldr_value) ? '#fbbf24' : '#60a5fa'} subtext={`LDR: ${liveData.ldr_value ?? 0}`} theme={theme} />
         <MetricCard label={t.activeAlerts} value={alerts.filter(a => !a.acknowledged).length} icon="🔔" color={alerts.filter(a => !a.acknowledged).length > 0 ? (theme==='dark'?'#f87171':'#dc2626') : (theme==='dark'?'#4ade80':'#16a34a')} subtext={t.unackedCount} theme={theme} />
       </div>
 
@@ -476,7 +485,7 @@ function RoomsView({ t, c, rooms, onToggleLight, onChangeMode, onThresholdChange
                   <div style={{ width: 1, background: c.border }} />
                   <div style={{ textAlign: 'center' }}>
                     <div style={{ color: c.textMuted, fontSize: 11, marginBottom: 4 }}>{t.ldrVal}</div>
-                    <div style={{ color: c.text, fontSize: 16, fontWeight: 700 }}>{room.current_ldr === 1 ? t.darkRoom : t.brightRoom}</div>
+                    <div style={{ color: c.text, fontSize: 16, fontWeight: 700 }}>{isDark(room.current_ldr) ? t.darkRoom : t.brightRoom}</div>
                   </div>
                 </div>
               </div>
@@ -527,8 +536,8 @@ function SensorsView({ t, c, lang, rooms, selectedRoomId, onRoomSelect, liveData
               <LineChart data={ldrHistory}>
                 <CartesianGrid strokeDasharray="3 3" stroke={c.chartGrid} />
                 <XAxis dataKey="t" tick={{ fill: c.textSec, fontSize: 10 }} interval="preserveStartEnd" />
-                <YAxis tick={{ fill: c.textSec, fontSize: 11 }} domain={[0, 1]} ticks={[0, 1]} tickFormatter={(val) => val === 1 ? (lang==='tr'?'Karanlık':'Dark') : (lang==='tr'?'Aydınlık':'Bright')} />
-                <Tooltip contentStyle={{ background: c.cardBg, border: `1px solid ${c.border}`, color: c.text }} formatter={(value) => [value === 1 ? (lang==='tr'?'Karanlık':'Dark') : (lang==='tr'?'Aydınlık':'Bright'), t.ldrVal]} />
+                <YAxis tick={{ fill: c.textSec, fontSize: 11 }} domain={['auto', 'auto']} />
+                <Tooltip contentStyle={{ background: c.cardBg, border: `1px solid ${c.border}`, color: c.text }} formatter={(value) => [`${value} ${isDark(value) ? (lang==='tr'?'(Karanlık)':'(Dark)') : (lang==='tr'?'(Aydınlık)':'(Bright)')}`, t.ldrVal]} />
                 <Line type="stepAfter" dataKey="v" stroke="#fbbf24" dot={false} strokeWidth={3} name={t.ldrVal} isAnimationActive={false} />
               </LineChart>
             </ResponsiveContainer>
@@ -710,33 +719,33 @@ export default function Dashboard() {
 
       // Canlı sensör veya kişi verisi geldiğinde
       if (msg.type === 'sensor_update') {
-        setRooms(prev => prev.map(r => r.id === msg.room_id ? {
+        // Oda listesini güncelle (ilk odayı fallback olarak kullan)
+        setRooms(prev => prev.map((r, i) => (r.id === msg.room_id || (msg.room_id == null && i === 0)) ? {
           ...r,
           current_ldr: msg.ldr_value ?? r.current_ldr,
           person_count: msg.person_count ?? r.person_count
         } : r));
 
-        if (msg.room_id === selectedRoomId) {
-          setLiveData(prev => ({
-            person_count: msg.person_count ?? prev.person_count,
-            light_state: msg.light_state ?? prev.light_state,
-            ldr_value: msg.ldr_value ?? prev.ldr_value,
-            sensor1_distance: msg.sensor1_distance ?? prev.sensor1_distance,
-            sensor2_distance: msg.sensor2_distance ?? prev.sensor2_distance
-          }));
+        // Canlı veriyi her zaman güncelle (room_id eşleşmesi aranmaz)
+        setLiveData(prev => ({
+          person_count: msg.person_count ?? prev.person_count,
+          light_state: msg.light_state ?? prev.light_state,
+          ldr_value: msg.ldr_value ?? prev.ldr_value,
+          sensor1_distance: msg.sensor1_distance ?? prev.sensor1_distance,
+          sensor2_distance: msg.sensor2_distance ?? prev.sensor2_distance
+        }));
 
-          if (msg.ldr_value !== undefined) {
-            setLdrHistory(prev => [
-              ...prev.slice(-49),
-              { t: new Date().toLocaleTimeString(lang==='tr'?'tr-TR':'en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }), v: msg.ldr_value }
-            ]);
-          }
-          if (msg.person_count !== undefined) {
-            setPersonHistory(prev => [
-              ...prev.slice(-49),
-              { t: new Date().toLocaleTimeString(lang==='tr'?'tr-TR':'en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }), v: msg.person_count }
-            ]);
-          }
+        if (msg.ldr_value !== undefined) {
+          setLdrHistory(prev => [
+            ...prev.slice(-49),
+            { t: new Date().toLocaleTimeString(lang==='tr'?'tr-TR':'en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }), v: msg.ldr_value }
+          ]);
+        }
+        if (msg.person_count !== undefined) {
+          setPersonHistory(prev => [
+            ...prev.slice(-49),
+            { t: new Date().toLocaleTimeString(lang==='tr'?'tr-TR':'en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }), v: msg.person_count }
+          ]);
         }
 
         if (['entry', 'exit', 'light_change'].includes(msg.event_type)) {

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 
+// WebSocket doğrudan backend'e bağlanır (proxy'ye güvenmez)
 const WS_URL = process.env.REACT_APP_API_URL
   ? process.env.REACT_APP_API_URL.replace('http', 'ws')
-  : `ws://${window.location.host}`;
+  : `ws://${window.location.hostname}:3001`;
 
 export function useWebSocket() {
   const { user } = useAuth();

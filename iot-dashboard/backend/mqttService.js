@@ -8,7 +8,7 @@ let globalLdrValue = 0;
 // ─── Eşik değerleri ─────────────────────────────────────────────────────────
 const THRESHOLDS = {
   sensor_distance: { max: 400, min: 2 },
-  person_count:    { max: 20 }
+  person_count: { max: 20 }
 };
 
 let mqttClient = null;
@@ -36,15 +36,15 @@ function logEvent(event) {
         (room_id, event_type, person_count, light_state, ldr_value, sensor1_distance, sensor2_distance, direction, message)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        event.room_id    ?? null,
+        event.room_id ?? null,
         event.event_type,
-        event.person_count       ?? null,
-        event.light_state        ?? null,
-        event.ldr_value          ?? null,
-        event.sensor1_distance   ?? null,
-        event.sensor2_distance   ?? null,
-        event.direction          ?? null,
-        event.message            ?? null
+        event.person_count ?? null,
+        event.light_state ?? null,
+        event.ldr_value ?? null,
+        event.sensor1_distance ?? null,
+        event.sensor2_distance ?? null,
+        event.direction ?? null,
+        event.message ?? null
       ]
     );
   } catch (err) {
@@ -169,11 +169,11 @@ function handleSensorMessage(topic, payload) {
   let room = null;
   const match = topic.match(/([^/]+)\/([^/]+)\/(telemetry|command)/);
   if (match) {
-    const takim_no = match[2];
+    const takim_no = parseInt(match[2]);
     room = db.get("SELECT * FROM rooms WHERE id = ?", [takim_no]);
   }
   if (!room) {
-    room = db.get("SELECT * FROM rooms WHERE LOWER(name) = 'salon'");
+    room = db.get("SELECT * FROM rooms WHERE name LIKE 'salon'");
   }
 
   if (room) {
@@ -243,8 +243,8 @@ function connectMqtt() {
     // Event tipini belirle
     let event_type = 'sensor_data';
     if (payload.direction) {
-      event_type = payload.direction === 'in'  ? 'entry' :
-                   payload.direction === 'out' ? 'exit'  : 'person_update';
+      event_type = payload.direction === 'in' ? 'entry' :
+        payload.direction === 'out' ? 'exit' : 'person_update';
     } else if (payload.light_state !== undefined) {
       event_type = 'light_change';
     } else if (payload.status) {
@@ -256,24 +256,24 @@ function connectMqtt() {
     const match = topic.match(/([^/]+)\/([^/]+)\/(telemetry|command)/);
     const db = getDb();
     if (match) {
-      const takim_no = match[2];
+        const takim_no = parseInt(match[2]);
       const r = db.get("SELECT id FROM rooms WHERE id = ?", [takim_no]);
       room_id = r?.id ?? null;
     } else {
-      const r = db.get("SELECT id FROM rooms WHERE LOWER(name) = 'salon'");
+      const r = db.get("SELECT id FROM rooms WHERE name = 'salon'");
       room_id = r?.id ?? null;
     }
 
     const eventData = {
       room_id,
       event_type,
-      person_count:     payload.person_count,
-      light_state:      payload.light_state,
-      ldr_value:        payload.ldr_value,
+      person_count: payload.person_count,
+      light_state: payload.light_state,
+      ldr_value: payload.ldr_value,
       sensor1_distance: payload.s1,
       sensor2_distance: payload.s2,
-      direction:        payload.direction,
-      message:          payload.message
+      direction: payload.direction,
+      message: payload.message
     };
 
     logEvent(eventData);
@@ -287,9 +287,9 @@ function connectMqtt() {
     });
   });
 
-  mqttClient.on('error',     (err) => console.error('[MQTT] Hata:', err.message));
-  mqttClient.on('reconnect', ()    => console.log('[MQTT] Yeniden bağlanıyor...'));
-  mqttClient.on('offline',   ()    => {
+  mqttClient.on('error', (err) => console.error('[MQTT] Hata:', err.message));
+  mqttClient.on('reconnect', () => console.log('[MQTT] Yeniden bağlanıyor...'));
+  mqttClient.on('offline', () => {
     console.warn('[MQTT] Broker bağlantısı kesildi');
     broadcast({ type: 'mqtt_status', connected: false });
   });
@@ -306,8 +306,8 @@ function startSimulator() {
   // Her 3 saniyede sensor verisi
   setInterval(() => {
     const ldr = Math.floor(Math.random() * 3000 + 200);
-    const s1  = Math.random() * 100 + 5;
-    const s2  = Math.random() * 100 + 5;
+    const s1 = Math.random() * 100 + 5;
+    const s2 = Math.random() * 100 + 5;
     const room = db.get("SELECT id FROM rooms WHERE LOWER(name) = LOWER('Salon')");
     const takim_no = room ? room.id : 1;
 
