@@ -684,8 +684,11 @@ export default function Dashboard() {
       }
     } catch (err) {
       console.error('Veri alınamadı:', err);
+      if (err.message.includes('token') || err.message.includes('Yetkilendirme') || err.message.includes('Geçersiz')) {
+        logout();
+      }
     }
-  }, [user.token, selectedRoomId]);
+  }, [user.token, selectedRoomId, logout]);
 
   useEffect(() => {
     fetchAll();
@@ -835,6 +838,8 @@ export default function Dashboard() {
     sensor2_distance: liveData.sensor2_distance
   };
 
+  const sortedLogs = [...logs].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
   return (
     <div style={{ display: 'flex', height: '100vh', background: c.bg, color: c.text, transition: 'background 0.3s', fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
       <style>{`
@@ -891,7 +896,7 @@ export default function Dashboard() {
            {activeTab === 'home' && (
              <HomeView 
                t={t} c={c} theme={theme} lang={lang} 
-               logs={logs} stats={stats} hourly={hourly} 
+               logs={sortedLogs} stats={stats} hourly={hourly} 
                alerts={alerts} liveData={aggregatedLiveData} 
              />
            )}
