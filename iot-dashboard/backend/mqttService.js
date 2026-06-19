@@ -165,20 +165,33 @@ function handleSensorMessage(topic, payload) {
     globalLdrValue = payload.ldr_value;
   }
 
-  // Hangi odaya ait? topic: problem_id / takim_no / mesaj_tipi
+  // ── Topic formatını tespit et ──────────────────────────────────────────────
+  // Format 1 (ESP32):    iot_dash_abird_room/{oda_adı}/{tip}
+  //   oda_adı: salon, mutfak vb. (rooms.name ile eşleşir)
+  //   tip: sensors | persons | light | status
+  // Format 2 (Simülatör): tarim_isik/{room_id}/telemetry|command
+  //   room_id: rooms.id ile eşleşir
+
   let room = null;
-  const match = topic.match(/([^/]+)\/([^/]+)\/(telemetry|command)/);
-  if (match) {
-    const takim_no = parseInt(match[2]);
-    room = db.get("SELECT * FROM rooms WHERE id = ?", [takim_no]);
-  }
-  if (!room) {
-    room = db.get("SELECT * FROM rooms WHERE name LIKE 'salon'");
+
+  const esp32Match = topic.match(/^iot_dash_abird_room\/([^/]+)\/([^/]+)$/);
+  const simMatch   = topic.match(/^tarim_isik\/([^/]+)\/(telemetry|command)$/);
+
+  if (esp32Match) {
+    const roomName = esp32Match[1]; // örn: "salon"
+    room = db.get("SELECT * FROM rooms WHERE LOWER(name) = LOWER(?)", [roomName]);
+    if (!room) {
+      // Yoksa ilk odayı al (geliştirme kolaylığı)
+      room = db.get("SELECT * FROM rooms LIMIT 1");
+    }
+  } else if (simMatch) {
+    const roomId = parseInt(simMatch[1]);
+    room = db.get("SELECT * FROM rooms WHERE id = ?", [roomId]);
   }
 
   if (room) {
-    const ldrVal = payload.ldr_value !== undefined ? payload.ldr_value : room.current_ldr;
-    const personCount = payload.person_count !== undefined ? payload.person_count : room.person_count;
+    const ldrVal     = payload.ldr_value     !== undefined ? payload.ldr_value     : room.current_ldr;
+    const personCount= payload.person_count  !== undefined ? payload.person_count  : room.person_count;
 
     // DB güncelle
     db.run(
@@ -186,7 +199,7 @@ function handleSensorMessage(topic, payload) {
       [ldrVal, personCount, room.id]
     );
 
-    // Eşik uyarıları
+    // Kalabalık uyarısı
     if (payload.person_count !== undefined && payload.person_count > THRESHOLDS.person_count.max) {
       createAlert('overcrowding', 'critical',
         `Kişi sayısı eşiği aştı: ${payload.person_count}`,
@@ -197,8 +210,8 @@ function handleSensorMessage(topic, payload) {
   // Tüm odaların auto/half_auto modlarını yeniden değerlendir
   const activeRooms = db.all("SELECT * FROM rooms WHERE light_mode IN ('auto', 'half_auto')");
   for (const r of activeRooms) {
-    const ldrVal = (r.id === room?.id && payload.ldr_value !== undefined) ? payload.ldr_value : (r.current_ldr || globalLdrValue);
-    const personCount = (r.id === room?.id && payload.person_count !== undefined) ? payload.person_count : r.person_count;
+    const ldrVal     = (r.id === room?.id && payload.ldr_value    !== undefined) ? payload.ldr_value    : (r.current_ldr || globalLdrValue);
+    const personCount= (r.id === room?.id && payload.person_count !== undefined) ? payload.person_count : r.person_count;
     evaluateRoomAutomation(r, personCount, ldrVal);
   }
 }
@@ -225,10 +238,12 @@ function connectMqtt() {
   mqttClient.on('connect', () => {
     console.log('[MQTT] Bağlantı kuruldu ✓');
 
-    mqttClient.subscribe('+/+/telemetry', { qos: 1 });
-    mqttClient.subscribe('+/+/command', { qos: 1 });
+    // hareketsensordemo.ino ve simülatör aynı topic formatını kullanıyor:
+    //   tarim_isik/{room_id}/telemetry  ← ESP32 ve simülatör buraya publish eder
+    //   tarim_isik/{room_id}/command    → Backend buraya publish eder (ESP32 dinler)
+    mqttClient.subscribe('tarim_isik/+/telemetry', { qos: 1 });
 
-    console.log('[MQTT] Topic\'lere abone olundu (+/+/telemetry ve +/+/command)');
+    console.log('[MQTT] Topic\'e abone olundu: tarim_isik/+/telemetry');
   });
 
   mqttClient.on('message', (topic, rawMsg) => {
@@ -251,16 +266,12 @@ function connectMqtt() {
       event_type = 'status';
     }
 
-    // room_id'yi bul
+    // room_id'yi bul — tarim_isik/{room_id}/telemetry formatı
     let room_id = null;
-    const match = topic.match(/([^/]+)\/([^/]+)\/(telemetry|command)/);
     const db = getDb();
-    if (match) {
-        const takim_no = parseInt(match[2]);
-      const r = db.get("SELECT id FROM rooms WHERE id = ?", [takim_no]);
-      room_id = r?.id ?? null;
-    } else {
-      const r = db.get("SELECT id FROM rooms WHERE name = 'salon'");
+    const topicMatch = topic.match(/^tarim_isik\/([^/]+)\//);
+    if (topicMatch) {
+      const r = db.get("SELECT id FROM rooms WHERE id = ?", [parseInt(topicMatch[1])]);
       room_id = r?.id ?? null;
     }
 

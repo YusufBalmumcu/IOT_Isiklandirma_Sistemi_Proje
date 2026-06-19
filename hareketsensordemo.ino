@@ -8,11 +8,16 @@
 #include <BLEAdvertisedDevice.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
+#include <ArduinoJson.h>
 
 // --- WIFI & MQTT AYARLARI ---
-const char* ssid     = "TurkTelekom_TPADE4_2.4GHz";
-const char* password = "pVdqbpFcHF7k";
-const char* mqtt_server = "192.168.1.125";
+const char* ssid     = "Lutfu_Galaxy_M12";
+const char* password = "bvwy0374";
+const char* mqtt_server = "10.100.254.131";
+
+// --- MQTT TOPIC ---
+const char* TOPIC_TELEMETRY = "tarim_isik/1/telemetry";
+const char* TOPIC_COMMAND   = "tarim_isik/1/command";
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -25,7 +30,7 @@ unsigned long sensorCooldown = 0; // Hareket sensörü cooldown süresi
 #define TFT_RST  16
 #define TS_CS    4
 const int trigPinR = 27, echoPinR = 14, trigPinL = 26, echoPinL = 25;
-const int ldrPin = 34, akilliIsik = 32;
+const int ldrPin = 34, akilliIsik = 13;
 
 Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
 XPT2046_Touchscreen ts(TS_CS);
@@ -58,23 +63,38 @@ bool msgActive = false;
 #define C_BG        0x0000
 #define C_ACCENT    0x1CB1
 
-// --- MQTT TOPIC AYARLARI ---
-const char* topic_telemetry = "tarim_isik/1/telemetry";
-const char* topic_cmd       = "tarim_isik/1/command";
+// --- MQTT GELEN MESAJ (KOMUT) CALLBACK ---
+void callback(char* topic, byte* payload, unsigned int length) {
+    Serial.print("[MQTT] Komut alindi [");
+    Serial.print(topic);
+    Serial.print("]: ");
+    
+    // JSON ayrıştır
+    StaticJsonDocument<256> doc;
+    DeserializationError error = deserializeJson(doc, payload, length);
+    if (error) {
+        Serial.print("JSON Ayrıştırma hatası: ");
+        Serial.println(error.c_str());
+        return;
+    }
+
+    const char* action = doc["action"];
+    if (action != NULL) {
+        if (strcmp(action, "light") == 0) {
+            int state = doc["state"];
+            // Dashboard'dan gelen komuta göre LED pini (akilliIsik) durumunu güncelle
+            digitalWrite(akilliIsik, state == 1 ? HIGH : LOW);
+            Serial.print("[COMMAND] Işık durumu güncellendi: ");
+            Serial.println(state == 1 ? "ACIK" : "KAPALI");
+        }
+    }
+}
 
 // --- MQTT BAGLANTI FONKSIYONU ---
-void callback(char* topic, byte* payload, unsigned int length) {
-    String msg;
-    for (int i = 0; i < length; i++) msg += (char)payload[i];
-    Serial.print("Gelen MQTT ("); Serial.print(topic); Serial.print("): "); Serial.println(msg);
-
-    // Eğer backend'den komut geldiyse uygula
-    if (String(topic).endsWith("/command")) {
-        if (msg.indexOf("\"state\":1") > 0 || msg.indexOf("\"state\": 1") > 0) {
-            digitalWrite(akilliIsik, HIGH);
-        } else if (msg.indexOf("\"state\":0") > 0 || msg.indexOf("\"state\": 0") > 0) {
-            digitalWrite(akilliIsik, LOW);
-        }
+void publishJson(const char* topic, const char* json) {
+    if (client.connected()) {
+        client.publish(topic, json);
+        Serial.print("[MQTT] -> "); Serial.print(topic); Serial.print(": "); Serial.println(json);
     }
 }
 
@@ -83,8 +103,9 @@ void reconnect() {
         Serial.print("MQTT Baglantisi kuruluyor...");
         if (client.connect("ESP32_Akilli_Sistem")) {
             Serial.println("Baglandi.");
-            client.subscribe(topic_cmd); // Komutları dinle
-            client.publish(topic_telemetry, "{\"status\":\"online\"}");
+            publishJson(TOPIC_TELEMETRY, "{\"status\":\"online\",\"version\":\"1.0\",\"message\":\"ESP32 baglandi\"}");
+            client.subscribe(TOPIC_COMMAND);
+            Serial.println("Komut konusuna abone olundu.");
         } else {
             Serial.print("Hata: "); Serial.print(client.state());
             delay(5000);
@@ -211,8 +232,9 @@ void loop() {
             if (now - lastReconnectAttempt > 5000) { // Bağlantı yoksa 5 saniyede bir dene
                 lastReconnectAttempt = now;
                 if (client.connect("ESP32_Akilli_Sistem")) {
-                    client.subscribe(topic_cmd);
-                    client.publish(topic_telemetry, "{\"status\":\"online\"}");
+                    publishJson(TOPIC_TELEMETRY, "{\"status\":\"online\",\"version\":\"1.0\",\"message\":\"ESP32 yeniden baglandi\"}");
+                    client.subscribe(TOPIC_COMMAND);
+                    Serial.println("Komut konusuna abone olundu.");
                 }
             }
         } else {
@@ -288,19 +310,24 @@ void loop() {
         if (curR && tR == 0) tR = now;
 
         if (tL > 0 && tR > 0) {
-            String dir = "";
+            const char* direction;
+            const char* event;
             if (tL < tR) { // Giriş
-                kisiSayisi++; 
-                dir = "in";
+                kisiSayisi++;
+                direction = "in";
+                event = "entry";
             } else { // Çıkış
-                if(kisiSayisi > 0) kisiSayisi--; 
-                dir = "out";
+                if(kisiSayisi > 0) kisiSayisi--;
+                direction = "out";
+                event = "exit";
             }
             
-            if(client.connected()) {
-                String payload = "{\"person_count\":" + String(kisiSayisi) + ",\"direction\":\"" + dir + "\"}";
-                client.publish(topic_telemetry, payload.c_str());
-            }
+            // Dashboard'a JSON olarak gönder
+            char buf[200];
+            snprintf(buf, sizeof(buf),
+                "{\"person_count\":%d,\"direction\":\"%s\",\"event\":\"%s\",\"s1\":%ld,\"s2\":%ld}",
+                kisiSayisi, direction, event, dL, dR);
+            publishJson(TOPIC_TELEMETRY, buf);
 
             // Hoşgeldin/Güle Güle Mesajı
             if (currentPage == 1) {
@@ -317,14 +344,13 @@ void loop() {
         }
         
         // Periyodik MQTT Güncellemesi (Bağlantı varsa)
-        if (client.connected() && (now - lastMqttUpdate > 5000)) {
-            String payload = "{\"ldr_value\":" + String(curLdr) + ",\"person_count\":" + String(kisiSayisi) + "}";
-            client.publish(topic_telemetry, payload.c_str());
-
-            if (btTakipModu) {
-                String btPayload = "{\"rssi\":" + String(rssiDegeri) + ",\"durum\":\"" + (kullaniciYakin ? "YAKIN" : "UZAK") + "\"}";
-                client.publish(topic_telemetry, btPayload.c_str());
-            }
+        if (client.connected() && (now - lastMqttUpdate > 3000)) {
+            int lightState = digitalRead(akilliIsik);
+            char buf[256];
+            snprintf(buf, sizeof(buf),
+                "{\"s1\":%ld,\"s2\":%ld,\"ldr_value\":%d,\"light_state\":%d,\"person_count\":%d}",
+                dL, dR, curLdr, lightState, kisiSayisi);
+            publishJson(TOPIC_TELEMETRY, buf);
             lastMqttUpdate = now;
         }
 
@@ -335,13 +361,30 @@ void loop() {
             if(currentPage == 3) drawPage3();
         }
 
-        // Akıllı Işık Mantığı (Sadece internet yoksa lokal olarak çalışır)
+        // Akıllı Işık Mantığı
+        int prevLightState = digitalRead(akilliIsik);
+        
+        // Sadece MQTT/İnternet bağlantısı yoksa yerel otomasyon kontrol etsin
         if (!client.connected()) {
             if (btTakipModu) {
                 digitalWrite(akilliIsik, kullaniciYakin ? HIGH : LOW);
             } else {
                 digitalWrite(akilliIsik, (kisiSayisi > 0 && curLdr > karanlikLimit) ? HIGH : LOW);
             }
+        }
+        
+        // Işık durumu değiştiğinde (ister yerel, ister MQTT komutuyla olsun) dashboard'a bildir
+        int newLightState = digitalRead(akilliIsik);
+        if (newLightState != prevLightState) {
+            const char* reason = "";
+            if (newLightState == HIGH) reason = "persons_detected_dark";
+            else if (kisiSayisi == 0) reason = "room_empty";
+            else reason = "sufficient_light";
+            char buf[200];
+            snprintf(buf, sizeof(buf),
+                "{\"light_state\":%d,\"ldr_value\":%d,\"person_count\":%d,\"reason\":\"%s\"}",
+                newLightState, curLdr, kisiSayisi, reason);
+            publishJson(TOPIC_TELEMETRY, buf);
         }
     }
 

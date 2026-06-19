@@ -22,6 +22,9 @@ class AuthProvider extends ChangeNotifier {
     _state = AuthState.unknown;
     notifyListeners();
 
+    // Kaydedilmiş sunucu IP'sini AppConstants'a yükle
+    await AuthService.loadSavedServerIp();
+
     final loggedIn = await AuthService.isLoggedIn();
     if (loggedIn) {
       _username = await AuthService.getUsername();
@@ -75,4 +78,10 @@ class AuthProvider extends ChangeNotifier {
     _errorMsg = null;
     notifyListeners();
   }
+
+  /// Sunucu IP'sini kaydet
+  Future<void> setServerIp(String ip) => AuthService.setServerIp(ip);
+
+  /// Kaydedilmiş sunucu IP'sini oku
+  Future<String?> getSavedServerIp() => AuthService.getSavedServerIp();
 }

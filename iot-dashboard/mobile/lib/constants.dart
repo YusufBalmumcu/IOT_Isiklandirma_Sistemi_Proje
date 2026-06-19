@@ -2,7 +2,7 @@
 /// Backend URL'si ve API path'leri burada yönetilir.
 class AppConstants {
   // Backend sunucu adresi — keşif servisi tarafından güncellenecektir
-  static String baseUrl = 'http://10.199.81.131:3001'; 
+  static String baseUrl = 'http://10.100.254.131:3001'; 
 
   static String get apiBase   => '$baseUrl/api';
   static String get wsBase {

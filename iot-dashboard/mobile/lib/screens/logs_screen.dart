@@ -205,7 +205,7 @@ class _LogRow extends StatelessWidget {
                       const SizedBox(width: 10),
                       const Icon(Icons.wb_sunny_rounded, size: 11, color: AppTheme.warning),
                       const SizedBox(width: 3),
-                      Text(log.ldrValue == 1 ? 'Karanlık' : 'Aydınlık',
+                      Text(log.ldrValue! > 2500 ? 'Karanlık' : 'Aydınlık',
                           style: TextStyle(color: context.textSecondary, fontSize: 10)),
                     ],
                     if (log.personCount != null) ...[

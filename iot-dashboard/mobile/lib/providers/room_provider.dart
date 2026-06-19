@@ -42,7 +42,8 @@ class RoomProvider extends ChangeNotifier {
       }
     } else if (type == 'sensor_update') {
       // LDR ve kişi sayısı güncellemesi
-      final ldr = data['global_ldr'] as int?;
+      // global_ldr yoksa ldr_value'dan oku (ESP32 direkt ldr_value gönderir)
+      final ldr = (data['global_ldr'] ?? data['ldr_value']) as int?;
       final personCount = data['person_count'] as int?;
       var roomId = data['room_id'] as int?;
       final topic = data['topic'] as String?;
@@ -56,26 +57,33 @@ class RoomProvider extends ChangeNotifier {
       } else if (ldr != null) {
         // Room_id bilinmiyorsa tüm odaların LDR'sini güncelle
         for (final r in _rooms) {
-          _updateRoomField(r.id, currentLdr: ldr);
+          _updateRoomField(r.id, currentLdr: ldr, personCount: personCount);
         }
       }
     }
   }
 
   int? _roomIdFromTopic(String topic) {
-    final match = RegExp(r'room\/([^/]+)\/').firstMatch(topic);
-    if (match == null) return null;
-
-    final roomName = match.group(1);
-    if (roomName == null) return null;
-
-    try {
-      return _rooms
-          .firstWhere((r) => r.name.toLowerCase() == roomName.toLowerCase())
-          .id;
-    } catch (_) {
-      return null;
+    // Format 1 (ESP32 + Simülätör): tarim_isik/{room_id}/telemetry
+    final numMatch = RegExp(r'tarim_isik\/([0-9]+)\/').firstMatch(topic);
+    if (numMatch != null) {
+      final id = int.tryParse(numMatch.group(1) ?? '');
+      if (id != null) return id;
     }
+
+    // Format 2 (eski): iot_dash_abird_room/{oda_adi}/{tip}
+    final nameMatch = RegExp(r'(?:room|abird_room)\/([^/]+)\/').firstMatch(topic);
+    if (nameMatch != null) {
+      final roomName = nameMatch.group(1);
+      if (roomName != null) {
+        try {
+          return _rooms
+              .firstWhere((r) => r.name.toLowerCase() == roomName.toLowerCase())
+              .id;
+        } catch (_) {}
+      }
+    }
+    return null;
   }
 
   void _updateRoomField(

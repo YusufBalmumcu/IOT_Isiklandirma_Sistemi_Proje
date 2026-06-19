@@ -130,6 +130,7 @@ function initSchema() {
   if (!roomExists.length || !roomExists[0].values.length) {
     db.run(
       `INSERT INTO rooms (name, mqtt_cmd_topic, light_mode, ldr_threshold) VALUES (?, ?, ?, ?)`,
+      // hareketsensordemo.ino bu topic'i dinliyor: tarim_isik/1/command
       ['Salon', 'tarim_isik/1/command', 'manual', 1500]
     );
     console.log('[DB] Varsayılan oda oluşturuldu: Salon');
@@ -138,6 +139,7 @@ function initSchema() {
 
   // ─── Migrasyonlar (Eski veritabanı dosyaları için schema güncellemeleri) ───
   try {
+    // hareketsensordemo.ino'nun beklediği formata güncelle
     db.run("UPDATE rooms SET mqtt_cmd_topic = 'tarim_isik/1/command' WHERE name = 'Salon'");
     saveDb();
   } catch(e) {}

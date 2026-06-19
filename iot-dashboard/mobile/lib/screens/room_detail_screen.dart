@@ -210,8 +210,11 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
               children: [
                 Expanded(child: _SensorTile(
                   icon: Icons.wb_sunny_rounded, color: AppTheme.warning,
-                  label: 'Ortam Işığı', value: room.currentLdr == 1 ? 'Karanlık' : 'Aydınlık',
-                  sub: 'Dijital Sensör',
+                  label: 'Ortam Işığı',
+                  // ESP32 analogRead: 0-4095. karanlikLimit=2500 (hareketsensordemo.ino)
+                  // ldr > 2500 → Karanlık, ldr <= 2500 → Aydınlık
+                  value: room.currentLdr > 2500 ? 'Karanlık' : 'Aydınlık',
+                  sub: 'LDR: ${room.currentLdr}',
                 )),
                 Container(width: 1, height: 60, color: context.border),
                 Expanded(child: _SensorTile(

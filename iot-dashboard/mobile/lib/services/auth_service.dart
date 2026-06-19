@@ -6,9 +6,29 @@ import '../constants.dart';
 /// JWT kimlik doğrulama servisi
 class AuthService {
   static const _storage = FlutterSecureStorage();
-  static const _tokenKey = 'jwt_token';
-  static const _usernameKey = 'username';
-  static const _roleKey = 'role';
+  static const _tokenKey    = 'jwt_token';
+  static const _usernameKey  = 'username';
+  static const _roleKey      = 'role';
+  static const _serverIpKey  = 'server_ip';
+
+  /// Sunucu IP'sini kaydet ve AppConstants.baseUrl'yi anında güncelle
+  static Future<void> setServerIp(String ip) async {
+    await _storage.write(key: _serverIpKey, value: ip);
+    AppConstants.baseUrl = 'http://$ip:3001';
+  }
+
+  /// Kaydedilmiş sunucu IP'sini oku (sadece IP kısmı)
+  static Future<String?> getSavedServerIp() async {
+    return _storage.read(key: _serverIpKey);
+  }
+
+  /// Uygulama açılışında kaydedilmiş IP'yi AppConstants'a yükle
+  static Future<void> loadSavedServerIp() async {
+    final ip = await getSavedServerIp();
+    if (ip != null && ip.isNotEmpty) {
+      AppConstants.baseUrl = 'http://$ip:3001';
+    }
+  }
 
   /// Token'ı güvenli depodan oku
   static Future<String?> getToken() => _storage.read(key: _tokenKey);
